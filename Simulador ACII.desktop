@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Simulador ACII
+Comment=Simulador de la placa NUCLEO-F401RE con el módulo LED&KEY
+Exec=/home/m1-max/Downloads/ACII_Simulador/Panel_py/simulador-acii.sh
+Icon=/home/m1-max/Downloads/ACII_Simulador/Panel_py/PanelACII.png
+Terminal=false
+Categories=Development;Electronics;
+StartupNotify=true

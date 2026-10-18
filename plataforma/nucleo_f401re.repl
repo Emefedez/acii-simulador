@@ -1,0 +1,378 @@
+// NUCLEO-F401RE con el modulo LED&KEY, para Renode.
+//
+// GENERADO por genera_repl.py a partir de
+// platforms/cpus/stm32f4.repl de Renode. No editar a mano.
+//
+// Que se cambia respecto al fichero de Renode, y por que:
+//
+//   Flash y RAM     512 KB y 96 KB, las del F401RE
+//   SysTick         84 MHz. El generico trae 72
+//   TIM2            SUSTITUIDO. El de Renode acepta las escrituras de la HAL
+//                   pero no aplica el valor de recarga: se queda con su
+//                   initialLimit, nunca desborda, y la interrupcion no llega
+//                   jamas. Medido con la P6: ARR valia 9999 y el contador iba
+//                   por 100.472
+//   ADC             SUSTITUIDO. El de Renode arranca pero devuelve siempre
+//                   cero y no hay forma de darle un valor
+//   TM1638          No existe en Renode
+//   B1              HAY QUE DECLARARLO: una entrada sin declarar lee 0, y el
+//                   firmware creeria el pulsador apretado desde el arranque
+//   SVD             DE LA CARPETA, STM32F40x.svd.gz. El de Renode se descarga
+//                   de internet al cargar la placa
+//
+// Y cuatro renombrados que hace falta porque el fichero se genero contra una
+// version anterior de Renode. Con la 1.16.1, sin ellos, LoadPlatformDescription
+// falla con «Could not resolve type» y el simulador se queda sin arrancar:
+//
+//   I2C.STM32F4_I2C   -> I2C.STM32F1_I2C   (es el tipo que usa el stm32f4.repl
+//                                            de la propia 1.16.1)
+//   STM32F4_RNG       -> STM32_RNG
+//   DMARecieve->      -> DMAReceive->      (faltaba una 'e' en el de Renode)
+//   spi1/2/3          -> hay que volver a poner series: STM32Series.F4; en la
+//                        1.16.1 ese argumento ya no es opcional, y sin el no
+//                        encuentra constructor. De paso se restituyen sus IRQ
+//                        (35, 36 y 51), que el generador se habia comido.
+//
+fsmcBank1: Memory.MappedMemory @ sysbus 0x60000000
+    size: 0x10000000
+
+sram: Memory.MappedMemory @ sysbus 0x20000000
+    size: 0x00040000
+
+flash: Memory.MappedMemory @ sysbus 0x08000000
+    size: 0x200000
+
+flash_controller: MTD.STM32F4_FlashController @ {
+        sysbus 0x40023C00;
+        sysbus new Bus.BusMultiRegistration { address: 0x1FFFC000; size: 0x100; region: "optionBytes" }
+    }
+    flash: flash
+
+usart1: UART.STM32_UART @ sysbus <0x40011000, +0x100>
+    -> nvic@37
+
+usart2: UART.STM32_UART @ sysbus <0x40004400, +0x100>
+    -> nvic@38
+
+usart3: UART.STM32_UART @ sysbus <0x40004800, +0x100>
+    -> nvic@39
+
+uart4: UART.STM32_UART @ sysbus <0x40004C00, +0x100>
+    -> nvic@52
+
+uart5: UART.STM32_UART @ sysbus <0x40005000, +0x100>
+    -> nvic@53
+
+can1: CAN.STMCAN @ sysbus <0x40006400, +0x400>
+    [0-3] -> nvic@[19-22]
+
+can2: CAN.STMCAN @ sysbus <0x40006800, +0x400>
+    [0-3] -> nvic@[63-66]
+    master: can1
+
+nvic: IRQControllers.NVIC @ sysbus 0xE000E000
+    priorityMask: 0xF0
+    systickFrequency: 72000000
+    IRQ -> cpu@0
+
+cpu: CPU.CortexM @ sysbus
+    cpuType: "cortex-m4"
+    nvic: nvic
+
+pwr: Miscellaneous.STM32_PWR @ sysbus 0x40007000
+
+crc: CRC.STM32_CRC @ sysbus 0x40023000
+    series: STM32Series.F4
+
+exti: IRQControllers.STM32F4_EXTI @ sysbus 0x40013C00
+    numberOfOutputLines: 24
+    [0-4] -> nvic@[6-10]
+    [5-9] -> nvicInput23@[0-4]
+    [10-15] -> nvicInput40@[0-5]
+    [16, 17, 18, 22] -> nvic@[1, 41, 42, 3]
+
+nvicInput23: Miscellaneous.CombinedInput @ none
+    numberOfInputs: 5
+    -> nvic@23
+
+nvicInput40: Miscellaneous.CombinedInput @ none
+    numberOfInputs: 6
+    -> nvic@40
+
+
+
+
+gpioPortD: GPIOPort.STM32_GPIOPort @ sysbus <0x40020C00, +0x400>
+    numberOfAFs: 16
+    [0-15] -> exti@[0-15]
+
+gpioPortE: GPIOPort.STM32_GPIOPort @ sysbus <0x40021000, +0x400>
+    numberOfAFs: 16
+    invertedAFPins: [[8, 1], [10, 1], [12, 1]]
+    [0-15] -> exti@[0-15]
+
+gpioPortF: GPIOPort.STM32_GPIOPort @ sysbus <0x40021400, +0x400>
+    numberOfAFs: 16
+    [0-15] -> exti@[0-15]
+
+gpioPortG: GPIOPort.STM32_GPIOPort @ sysbus <0x40021800, +0x400>
+    numberOfAFs: 16
+    [0-15] -> exti@[0-15]
+
+gpioPortH: GPIOPort.STM32_GPIOPort @ sysbus <0x40021c00, +0x400>
+    numberOfAFs: 16
+    invertedAFPins: [[13, 3], [14, 3], [15, 3]]
+    [0-15] -> exti@[0-15]
+
+gpioPortI: GPIOPort.STM32_GPIOPort @ sysbus <0x40022000, +0x400>
+    numberOfAFs: 16
+    [0-15] -> exti@[0-15]
+
+gpioPortJ: GPIOPort.STM32_GPIOPort @ sysbus <0x40022400, +0x400>
+    numberOfAFs: 16
+    [0-15] -> exti@[0-15]
+
+gpioPortK: GPIOPort.STM32_GPIOPort @ sysbus <0x40022800, +0x400>
+    numberOfAFs: 16
+    [0-15] -> exti@[0-15]
+
+ethernet: Network.SynopsysEthernetMAC @ sysbus 0x40028000
+    -> nvic@61
+
+rom1: Memory.MappedMemory @ sysbus 0x1FFF0000
+    size: 0xC000
+
+rom2: Memory.MappedMemory @ sysbus 0x1FFFC400
+    size: 0x3C00
+
+spi1: SPI.STM32SPI @ sysbus 0x40013000
+    series: STM32Series.F4
+    IRQ->nvic@35
+
+spi2: SPI.STM32SPI @ sysbus 0x40003800
+    series: STM32Series.F4
+    IRQ->nvic@36
+    DMAReceive->dma1@3
+
+spi3: SPI.STM32SPI @ sysbus 0x40003C00
+    series: STM32Series.F4
+    IRQ->nvic@51
+
+i2c1: I2C.STM32F1_I2C @ sysbus 0x40005400
+    EventInterrupt -> nvic@31
+    ErrorInterrupt -> nvic@32
+
+i2c2: I2C.STM32F1_I2C @ sysbus 0x40005800
+    EventInterrupt -> nvic@33
+    ErrorInterrupt -> nvic@34
+
+i2c3: I2C.STM32F1_I2C @ sysbus 0x40005C00
+    EventInterrupt -> nvic@72
+    ErrorInterrupt -> nvic@73
+
+dma1: DMA.STM32DMA @ sysbus 0x40026000
+    [0-7] -> nvic@[11-17,47]
+
+dma2: DMA.STM32DMA @ sysbus 0x40026400
+    [0-7] -> nvic@[56-60,68-70]
+
+rng: Miscellaneous.STM32_RNG @ sysbus 0x50060800
+    series: STM32Series.F4
+    -> nvic@80
+
+iwdg: Timers.STM32_IndependentWatchdog @ sysbus 0x40003000
+    frequency: 32000
+    windowOption: false
+    defaultPrescaler: 0x4
+
+rtc: Timers.STM32F4_RTC @ sysbus 0x40002800
+    AlarmIRQ -> nvic@41
+
+rcc: Miscellaneous.STM32F4_RCC @ sysbus 0x40023800
+    rtcPeripheral: rtc
+    Timer9Reset -> timer9@255
+
+timer1: Timers.STM32_Timer @ sysbus 0x40010000
+    BreakInterrupt -> nvic@24
+    UpdateInterrupt -> nvic@25
+    [TriggerInterrupt, CommutationInterrupt] -> nvic@[26, 26]
+    CaptureCompareInterrupt -> nvic@27
+    frequency: 10000000
+    initialLimit: 0xFFFF
+
+
+timer3: Timers.STM32_Timer @ sysbus 0x40000400
+    -> nvic@29
+    frequency: 10000000
+    initialLimit: 0xFFFF
+
+timer4: Timers.STM32_Timer @ sysbus 0x40000800
+    -> nvic@30
+    frequency: 10000000
+    initialLimit: 0xFFFF
+
+timer5: Timers.STM32_Timer @ sysbus 0x40000C00
+    -> nvic@50
+    frequency: 10000000
+    initialLimit: 0xFFFFFFFF
+
+timer6: Timers.STM32_Timer @ sysbus 0x40001000
+    -> nvic@54
+    frequency: 10000000
+    initialLimit: 0xFFFF
+
+timer7: Timers.STM32_Timer @ sysbus 0x40001400
+    -> nvic@55
+    frequency: 10000000
+    initialLimit: 0xFFFF
+
+timer8: Timers.STM32_Timer @ sysbus 0x40010400
+    BreakInterrupt -> nvic@43
+    UpdateInterrupt -> nvic@44
+    [TriggerInterrupt, CommutationInterrupt] -> nvic@[45, 45]
+    CaptureCompareInterrupt -> nvic@46
+    frequency: 10000000
+    initialLimit: 0xFFFF
+
+timer9: Timers.STM32_Timer @ sysbus 0x40014000
+    -> nvic@24
+    frequency: 10000000
+    initialLimit: 0xFFFF
+
+timer10: Timers.STM32_Timer @ sysbus 0x40014400
+    -> nvic@25
+    frequency: 10000000
+    initialLimit: 0xFFFF
+
+timer11: Timers.STM32_Timer @ sysbus 0x40014800
+    -> nvic@26
+    frequency: 10000000
+    initialLimit: 0xFFFF
+
+timer12: Timers.STM32_Timer @ sysbus 0x40001800
+    -> nvic@43
+    frequency: 10000000
+    initialLimit: 0xFFFF
+
+timer13: Timers.STM32_Timer @ sysbus 0x40001C00
+    -> nvic@44
+    frequency: 10000000
+    initialLimit: 0xFFFF
+
+timer14: Timers.STM32_Timer @ sysbus 0x40002000
+    -> nvic@45
+    frequency: 10000000
+    initialLimit: 0xFFFF
+
+// Alternate function mapping connections. For more details see `stm32l071.repl`.
+
+
+
+
+
+
+
+
+
+
+
+
+bitbandPeripherals: Miscellaneous.BitBanding @ sysbus <0x42000000, +0x2000000>
+    peripheralBase: 0x40000000
+
+bitbandSram: Miscellaneous.BitBanding @ sysbus <0x22000000, +0x200000>
+    peripheralBase: 0x20000000
+
+sysbus:
+    init:
+        ApplySVD @STM32F40x.svd.gz
+        Tag <0x40021000, 0x40021003> "GPIOE_MODER" 0xFFFFFFFF
+        Tag <0x40021004, 0x40021007> "GPIOE_OTYPER" 0x00000008
+        // FLASH and USB tags are required for CubeMX-based projects to pass the initialization phase
+        Tag <0x50000010, 0x5000003f> "USB:RESET" 0x80000000
+
+// ==========================================================================
+//  Lo propio de esta placa
+// ==========================================================================
+
+// Los tres puertos que usan las practicas, con MODER y PUPDR de verdad.
+// El valor de reinicio de MODER es el del F401RE: PA13 y PA14 salen ya
+// como funcion alternativa porque son las patillas del depurador.
+// Los tres puertos que se sustituyen por el modelo propio. La linea del
+// EXTI hay que repetirla aqui: al redefinir el periferico se pierde la que
+// traia la descripcion de serie, y sin ella NINGUNA interrupcion de pin
+// llega al procesador. Eso deja sin funcionar la P4 entera -que es la
+// practica que las enseña- y el pulsador B1 en cualquier programa que lo
+// lea por interrupcion.
+gpioPortA: GPIOPort.PuertoGPIO @ sysbus <0x40020000, +0x400>
+    moderReset: 0xA8000000
+    pupdrReset: 0x64000000
+    [0-15] -> exti@[0-15]
+
+gpioPortB: GPIOPort.PuertoGPIO @ sysbus <0x40020400, +0x400>
+    moderReset: 0x00000280
+    pupdrReset: 0x00000100
+    [0-15] -> exti@[0-15]
+
+gpioPortC: GPIOPort.PuertoGPIO @ sysbus <0x40020800, +0x400>
+    // B1 lleva pull-up en la placa: PC13 lee 1 en reposo
+    pullUpsExternos: 0x2000
+    [0-15] -> exti@[0-15]
+
+flash:
+    size: 0x80000
+
+sram:
+    size: 0x18000
+
+nvic:
+    systickFrequency: 84000000
+
+tim2: Timers.TemporizadorSTM32 @ sysbus <0x40000000, +0x400>
+    frecuencia: 84000000
+    IRQ -> nvic@28
+
+adc1: Analog.PotenciometroADC @ sysbus <0x40012000, +0x100>
+
+// B1, el pulsador azul. En la placa lleva pull-up y en reposo lee 1.
+b1: Miscellaneous.Button @ gpioPortC 13
+    invert: true
+    -> gpioPortC@13
+
+// LD2, el LED verde de usuario
+ld2: Miscellaneous.LED @ gpioPortA 5
+
+gpioPortA:
+    5 -> ld2@0
+
+// El modulo LED&KEY: STB en PA10, CLK en PB4 y DIO en PB5, como en la placa
+tm1638: Miscellaneous.TM1638Panel @ gpioPortA 10
+    puerto: 3939
+    // Escribir el registro del puerto a mano se probo y NO resuelve la
+    // lectura de teclas. Ver LEEME. Con 0 el periferico no toca el bus.
+    RegistroDIO: 0
+    BitDIO: 5
+    // El panel mueve el potenciometro y el pulsador de la placa por el mismo
+    // socket que el display, para no abrir tres conexiones
+    Conversor: adc1
+    Pulsador: gpioPortC
+    PinPulsador: 13
+
+gpioPortA:
+    10 -> tm1638@0
+
+// LD2 tambien al modulo, en su linea 3, para que el panel lo pueda dibujar.
+// PA5 ya va al LED de Renode (ld2@0, mas arriba); este segundo destino es el
+// que hace que se vea. Sin el, la P1 se ejecutaba bien y no se veia nada.
+gpioPortA:
+    5 -> tm1638@3
+
+gpioPortB:
+    4 -> tm1638@1
+    5 -> tm1638@2
+
+// DIO es bidireccional: al leer el teclado manda el modulo, asi que su
+// salida tiene que volver al mismo pin. Sin esta linea, el firmware envia
+// bien pero no recibe nunca una tecla.
+tm1638:
+    0 -> gpioPortB@5

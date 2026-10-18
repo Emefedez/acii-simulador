@@ -1,0 +1,30 @@
+MAINICON ICON "PanelACII.ico"
+
+// La version que ensenia Windows en Propiedades > Detalles, y la misma que
+// declara el instalador. Si se sube una, hay que subir la otra:
+// Instalador\ACII_Simulador_Setup.iss, #define AppVersion.
+1 VERSIONINFO
+FILEVERSION     1,2,0,0
+PRODUCTVERSION  1,2,0,0
+FILEOS          0x4L        // VOS__WINDOWS32
+FILETYPE        0x1L        // VFT_APP
+{
+  BLOCK "StringFileInfo"
+  {
+    BLOCK "0c0a04b0"        // espaniol (Espania), Unicode
+    {
+      VALUE "CompanyName",      "Universidade de Vigo - ESEI"
+      VALUE "FileDescription",  "Panel del simulador de la placa - ACII"
+      VALUE "FileVersion",      "1.2.0.0"
+      VALUE "InternalName",     "PanelACII"
+      VALUE "LegalCopyright",   "Eduardo Balvis"
+      VALUE "OriginalFilename", "PanelACII.exe"
+      VALUE "ProductName",      "Simulador ACII"
+      VALUE "ProductVersion",   "1.2.0"
+    }
+  }
+  BLOCK "VarFileInfo"
+  {
+    VALUE "Translation", 0x0c0a, 1200
+  }
+}
