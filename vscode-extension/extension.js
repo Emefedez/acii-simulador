@@ -116,38 +116,61 @@ function readProject(iocFile, folder) {
   return project;
 }
 
+// The path with symlinks resolved, or just absolute if it does not exist.
+function realPath(p) {
+  try { return fs.realpathSync(p); } catch { return path.resolve(p); }
+}
+
+function isInside(child, parent) {
+  const rel = path.relative(parent, child);
+  return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+}
+
 // STM32CubeIDE writes the project's absolute path into Debug/makefile (the
-// linker script, -T"C:\Users\...\proj\STM32F401RETX_FLASH.ld"). A project
-// built on Windows then fails here with "multiple target patterns" (make reads
-// the drive's colon). Each Windows path is replaced by the relative path, from
-// Debug/, of the longest tail of it that exists in the project. Returns the
-// replacements made ([] if none), writing the file only if there were any.
-function fixWindowsMakefile(projectDir) {
+// linker script, -T"/home/.../proj/STM32F401RETX_FLASH.ld"), so the makefile
+// breaks once the project is somewhere else. Built on Windows, make fails here
+// with "multiple target patterns" (it reads the C:\ drive's colon); moved to
+// another folder or machine, with "No rule to make target". Each such path is
+// replaced by the relative path, from Debug/, of the longest tail of it that
+// exists in the project. A path that still exists is kept, unless it is in
+// another copy of this project (a folder of the same name elsewhere: the
+// project was copied, not moved). Returns the replacements made ([] if none),
+// writing the file only if there were any.
+function fixMakefilePaths(projectDir) {
   const file = path.join(projectDir, 'Debug', 'makefile');
   let text;
   try { text = fs.readFileSync(file, 'utf8'); } catch { return []; }
+  const here = realPath(projectDir);
   const fixes = [];
-  const fixed = text.replace(/\b[A-Za-z]:\\[^\s"'$()]+/g, win => {
-    const parts = win.split('\\').slice(1).filter(Boolean);
+  const relative = (abs, parts) => {
     for (let i = 0; i < parts.length; i++) {
       const target = path.join(projectDir, ...parts.slice(i));
       if (!fs.existsSync(target)) continue;
       const rel = path.relative(path.dirname(file), target).split(path.sep).join('/');
-      fixes.push(`${win} -> ${rel}`);
+      fixes.push(`${abs} -> ${rel}`);
       return rel;
     }
-    return win;
-  });
+    return abs;
+  };
+  const elsewhere = abs => {
+    if (!fs.existsSync(abs)) return true;
+    const real = realPath(abs);
+    return !isInside(real, here) && real.split(path.sep).includes(path.basename(here));
+  };
+  const fixed = text
+    .replace(/\b[A-Za-z]:\\[^\s"'$()]+/g, win => relative(win, win.split('\\').slice(1).filter(Boolean)))
+    .replace(/(?<=^|[\s"'=,])\/[^\s"'$(),:]+/gm, abs => elsewhere(abs) ? relative(abs, abs.split('/').filter(Boolean)) : abs);
   if (fixes.length) fs.writeFileSync(file, fixed);
   return fixes;
 }
 
-// Objects in Debug/ compiled on Windows (a project brought from a CubeIDE on
-// Windows): their debug info names C:\... sources, so a debugger here cannot
-// show the code, and make may keep them even after the sources change. Deletes
-// them with their .d/.su/.cyclo so the next build compiles everything here.
-// Returns how many objects were deleted.
-function removeWindowsObjects(projectDir) {
+// Objects in Debug/ compiled somewhere else (on Windows, or before the project
+// was moved or copied): their debug info names sources that are not these, so
+// the debugger cannot show the code, and make may keep them even after the
+// sources change. Deletes them with their .d/.su/.cyclo so the next build
+// compiles everything here. Returns how many objects were deleted.
+function removeForeignObjects(projectDir) {
+  const debug = realPath(path.join(projectDir, 'Debug'));
   const objects = [];
   const walk = dir => {
     let entries;
@@ -162,10 +185,13 @@ function removeWindowsObjects(projectDir) {
   let removed = 0;
   for (const o of objects) {
     let text;
-    try { text = fs.readFileSync(o).toString('latin1'); } catch { continue; }
+    try { text = fs.readFileSync(o).toString('utf8'); } catch { continue; }
     // A Windows directory in the debug strings: "C:\ST\STM32CubeIDE..." from
-    // gcc, "C:/Users/.../Debug" from the assembler.
-    if (!/[A-Za-z]:[\\/][\w .-]+[\\/]/.test(text)) continue;
+    // gcc, "C:/Users/.../Debug" from the assembler. Or the directory make ran
+    // in (DW_AT_comp_dir, "/home/.../proj/Debug"), when it is another Debug/.
+    const windows = /[A-Za-z]:[\\/][\w .-]+[\\/]/.test(text);
+    const moved = [...text.matchAll(/(?:\/[^\0/]+)+\/Debug(?=\0)/g)].some(m => realPath(m[0]) !== debug);
+    if (!windows && !moved) continue;
     for (const ext of ['.o', '.d', '.su', '.cyclo']) {
       try { fs.unlinkSync(o.slice(0, -2) + ext); } catch { /* not there */ }
     }
@@ -503,6 +529,25 @@ function compileCommands(project) {
   return JSON.stringify(sources.sort().map(file => ({ directory: dir, file, arguments: [...args, '-c', file] })), null, 1) + '\n';
 }
 
+// Rewrites the project's compile_commands.json if compileCommands wrote it
+// (every entry is clang for arm-none-eabi) and it no longer matches: the
+// project was moved (its paths are absolute), sources were added or removed,
+// or the first build replaced the .cproject flags. One written by anything
+// else is left alone. True if rewritten.
+function refreshCompileCommands(project) {
+  if (project.build !== 'make') return false;
+  const file = path.join(project.dir, 'compile_commands.json');
+  const current = readText(file);
+  if (current === undefined) return false;
+  let db;
+  try { db = JSON.parse(current); } catch { return false; }
+  if (!Array.isArray(db) || !db.length || !db.every(e => e.arguments?.[0] === 'clang' && e.arguments[1] === '--target=arm-none-eabi')) return false;
+  const desired = compileCommands(project);
+  if (desired.trim() === current) return false;
+  fs.writeFileSync(file, desired);
+  return true;
+}
+
 // ---------------------------------------------------------------- simulator
 
 // The ACII simulator's launcher (simulador-acii.sh, which finds a Python with
@@ -778,6 +823,9 @@ function activate(context) {
           return undefined;
         }
         if (/ \((ST-Link|ACII Simulator)\)$/.test(cfg.name ?? '')) stopAtMain(settings());
+        // Before the preLaunchTask builds it.
+        const project = allProjects().find(p => labels(p).debug === cfg.name);
+        if (project) fixMakefile(project.dir);
         return cfg;
       },
     }),
@@ -911,24 +959,36 @@ function activate(context) {
     if (choice === "Don't Ask Again") await context.globalState.update('lintingDeclined', true);
   }
 
+  // Repairs what a project built somewhere else (on Windows, or before it was
+  // moved or copied) keeps of that place: Debug/makefile's absolute paths, its
+  // objects, and the compile_commands.json written for it.
   function fixMakefile(dir) {
+    if (path.basename(dir) === 'Debug' || !fs.existsSync(path.join(dir, 'Debug', 'makefile'))) return;
+    const name = path.basename(dir);
+    try {
+      const ioc = findIocFiles(dir, 0)[0];
+      const project = ioc && projectFor(ioc);
+      if (project && refreshCompileCommands(project)) log.appendLine(`${name}: rewrote compile_commands.json`);
+    } catch (e) {
+      log.appendLine(`${name}: could not update compile_commands.json: ${e.message}`);
+    }
     // On Windows a C:\\ path is this machine's own and every object has one.
-    if (WINDOWS || path.basename(dir) === 'Debug' || !fs.existsSync(path.join(dir, 'Debug', 'makefile'))) return;
+    if (WINDOWS) return;
     let fixes, removed;
     try {
-      fixes = fixWindowsMakefile(dir);
-      removed = removeWindowsObjects(dir);
+      fixes = fixMakefilePaths(dir);
+      removed = removeForeignObjects(dir);
     } catch (e) {
-      return void log.appendLine(`${dir}: could not fix the Windows build: ${e.message}`);
+      return void log.appendLine(`${dir}: could not fix the build made elsewhere: ${e.message}`);
     }
-    for (const f of fixes) log.appendLine(`${path.basename(dir)}: Debug/makefile: ${f}`);
-    if (removed) log.appendLine(`${path.basename(dir)}: removed ${removed} objects compiled on Windows`);
+    for (const f of fixes) log.appendLine(`${name}: Debug/makefile: ${f}`);
+    if (removed) log.appendLine(`${name}: removed ${removed} objects compiled elsewhere`);
     const done = [
-      fixes.length ? `replaced ${fixes.length} Windows path${fixes.length > 1 ? 's' : ''} in Debug/makefile with relative ones` : '',
+      fixes.length ? `replaced ${fixes.length} absolute path${fixes.length > 1 ? 's' : ''} in Debug/makefile with relative ones` : '',
       removed ? `removed ${removed} object${removed > 1 ? 's' : ''} compiled there, so the next build compiles them here (and the debugger finds the sources)` : '',
     ].filter(Boolean);
     if (done.length) {
-      vscode.window.showInformationMessage(`${path.basename(dir)} was built by STM32CubeIDE on Windows: ${done.join('; ')}.`);
+      vscode.window.showInformationMessage(`${name} was built by STM32CubeIDE in another folder or on another computer: ${done.join('; ')}.`);
     }
   }
 
@@ -1352,5 +1412,5 @@ function deactivate() { return stopSimulatorOnExit?.(); }
 module.exports = {
   activate,
   deactivate,
-  _test: { stlinkIds, findStlink, findIocFiles, readProject, targetCfg, elfRel, elfIsStale, entries, openocdCfg, mergeEntries, describeChanges, fixWindowsMakefile, removeWindowsObjects, findSimulator, simulatorLaunch, which, cubeIdeBin, resolveTools, newlibInclude, cpuFlags, compileCommands, renodeMonitorPort, renodeMonitor, uwTickAddress },
+  _test: { stlinkIds, findStlink, findIocFiles, readProject, targetCfg, elfRel, elfIsStale, entries, openocdCfg, mergeEntries, describeChanges, fixMakefilePaths, removeForeignObjects, refreshCompileCommands, findSimulator, simulatorLaunch, which, cubeIdeBin, resolveTools, newlibInclude, cpuFlags, compileCommands, renodeMonitorPort, renodeMonitor, uwTickAddress },
 };

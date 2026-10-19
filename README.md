@@ -18,7 +18,7 @@ cd ~/Downloads/ACII_Simulador
 1. **Simulator Panel & Launcher (`Panel_py/instalar.sh`)**: Checks Python 3 + Tkinter (`>= 8.6`), installs the panel fonts (`Barlow`, `Barlow Condensed`, `IBM Plex Mono`), and creates the desktop application launcher (`~/.local/share/applications/acii-simulador.desktop` on Linux or `~/Applications/Simulador ACII.app` on macOS).
 2. **Renode `1.16.1` Portable**: Checks if Renode `1.16.1` is installed. If missing on Linux (`x86_64` or `arm64`/`aarch64`), automatically downloads and extracts the official `renode-1.16.1` portable release into `../renode_portable/`, where the simulator detects it automatically without needing root privileges.
 3. **STM32 Build Helper (`~/.local/bin/stm32-make`)**: Ensures `stm32-make` is available to compile STM32CubeIDE `Debug/makefile` projects using either STM32CubeIDE's bundled GNU Tools for STM32 or the system `arm-none-eabi-gcc` toolchain.
-4. **VS Code Extensions**: Packages `vscode-extension/stlink-autodebug-0.4.15.vsix` (zero npm/Node dependencies required) and installs both `ms-vscode.cpptools` and `stlink-autodebug` into VS Code.
+4. **VS Code Extensions**: Packages `vscode-extension/stlink-autodebug-0.4.16.vsix` (zero npm/Node dependencies required) and installs both `ms-vscode.cpptools` and `stlink-autodebug` into VS Code.
 5. **VS Code User Settings**: Non-destructively configures `stlinkAutodebug.simulator.debug` and `stm32cube-ide-clangd.enableLinting` (and `stlinkAutodebug.simulator.path` / `stlinkAutodebug.gdbPath` if non-default) in your VS Code `settings.json`.
 
 `stm32-make` also routes the compilers through `~/.local/lib/stm32-make/color/` so build errors are colored in VS Code's terminal when the build runs inside `muvm` (Asahi Linux).
@@ -71,7 +71,7 @@ The packed extension is in the repository. Install it:
 
 ```powershell
 code --install-extension ms-vscode.cpptools
-code --install-extension vscode-extension\stlink-autodebug-0.4.15.vsix --force
+code --install-extension vscode-extension\stlink-autodebug-0.4.16.vsix --force
 ```
 
 To rebuild the `.vsix` after changing the extension: `py -3 vscode-extension\pack.py`.
@@ -139,7 +139,7 @@ The extension lives in [`vscode-extension/`](./vscode-extension/) and uses a zer
 
 ```bash
 python3 vscode-extension/pack.py
-code --install-extension vscode-extension/stlink-autodebug-0.4.15.vsix --force
+code --install-extension vscode-extension/stlink-autodebug-0.4.16.vsix --force
 ```
 
 ---
@@ -227,12 +227,12 @@ ACII_Simulador/
 │   ├── PuertoGPIO.cs          # Custom STM32F4 GPIO model with external pull-ups
 │   ├── Temporizador.cs        # Timer peripheral model
 │   └── ConversorADC.cs        # ADC peripheral model
-├── vscode-extension/          # ST-Link Auto Debug VS Code extension (v0.4.15)
+├── vscode-extension/          # ST-Link Auto Debug VS Code extension (v0.4.16)
 │   ├── package.json           # Extension manifest
 │   ├── extension.js           # Extension implementation (ST-Link + ACII Simulator)
 │   ├── pack.py                # Zero-dependency VSIX builder
 │   ├── README.md              # Extension-specific documentation
-│   └── stlink-autodebug-0.4.15.vsix
+│   └── stlink-autodebug-0.4.16.vsix
 ├── ejemplo/                   # Prebuilt example firmware (ejemplo.elf)
 └── Panel/                     # Original Windows Delphi panel sources
 ```

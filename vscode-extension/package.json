@@ -3,7 +3,7 @@
   "displayName": "ST-Link Auto Debug",
   "description": "Sets up any STM32CubeMX project to build, flash and debug on a real board (native OpenOCD + GDB), offers to do so when an ST-Link is connected, and builds and runs or debugs it in the ACII simulator.",
   "publisher": "local",
-  "version": "0.4.15",
+  "version": "0.4.16",
   "license": "MIT",
   "engines": {
     "vscode": "^1.90.0"
