@@ -7,7 +7,8 @@
 #   2. Renode 1.16.1 portable (auto-downloads for Linux x86_64 / arm64 if missing)
 #   3. ~/.local/bin/stm32-make helper for STM32CubeIDE Debug/makefile builds
 #   4. VS Code C/C++ extension (ms-vscode.cpptools) + ST-Link Auto Debug (.vsix)
-#   5. VS Code user settings (stlinkAutodebug.simulator.debug, gdbPath, etc.)
+#   5. VS Code user settings (stlinkAutodebug.simulator.debug, gdbPath,
+#      stm32cube-ide-clangd.enableLinting, etc.)
 # =============================================================================
 set -euo pipefail
 
@@ -147,7 +148,9 @@ fi
 
 if [[ -n "$tools" ]]; then
   if [[ "$(uname -m)" != "x86_64" && -x "$HOME/.local/bin/muvm-run" ]]; then
-    exec "$HOME/.local/bin/muvm-run" env PATH="$tools:/usr/bin:/bin" \
+    # Inside muvm gcc's output is not a terminal: the wrappers in color/ force
+    # colored diagnostics in VS Code's build terminal.
+    exec "$HOME/.local/bin/muvm-run" env PATH="$HOME/.local/lib/stm32-make/color:$tools:/usr/bin:/bin" \
       FEX_ROOTFS=/run/fex-emu/rootfs FEX_SERVERSOCKETPATH=stm32-fex2609 make "$@"
   fi
   export PATH="$tools:$PATH"
@@ -162,6 +165,22 @@ MAKE_EOF
   chmod +x "$HOME/.local/bin/stm32-make"
   ok "Created $HOME/.local/bin/stm32-make"
 fi
+
+# Colored gcc diagnostics through stm32-make's muvm path (harmless elsewhere).
+COLOR_DIR="$HOME/.local/lib/stm32-make/color"
+mkdir -p "$COLOR_DIR"
+for cc in arm-none-eabi-gcc arm-none-eabi-g++; do
+  cat > "$COLOR_DIR/$cc" <<WRAP_EOF
+#!/bin/sh
+# Colored diagnostics for builds through stm32-make, then the real $cc.
+IFS=:; for d in \$PATH; do
+  [ "\$d" != "$COLOR_DIR" ] && [ -x "\$d/$cc" ] && exec "\$d/$cc" -fdiagnostics-color=always "\$@"
+done
+echo "$cc: compiler not found in PATH" >&2; exit 127
+WRAP_EOF
+  chmod +x "$COLOR_DIR/$cc"
+done
+ok "Colored build diagnostics: $COLOR_DIR"
 
 # Check GDB with ARM support
 if command -v arm-none-eabi-gdb >/dev/null 2>&1; then
@@ -238,6 +257,9 @@ else:
 
 desired = [
     ("stlinkAutodebug.simulator.debug", "true"),
+    # The STM32Cube clangd extension drops every error/warning while typing
+    # unless this is on (it is off by default).
+    ("stm32cube-ide-clangd.enableLinting", "true"),
 ]
 # Only set simulator.path if the repo is not in the default ~/Downloads/ACII_Simulador
 default_sim = os.path.expanduser("~/Downloads/ACII_Simulador/Panel_py/simulador-acii.sh")

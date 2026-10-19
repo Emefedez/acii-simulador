@@ -15,6 +15,8 @@ de `Panel/uPanel.pas`, no se han vuelto a inventar.
                  {"orden": "para"}   {"orden": "cierra"}
                  y cuenta lo que pasa por la salida estandar, en lineas que
                  empiezan por «@». Es lo que usa la extension de VS Code.
+                 (@arrancando elf, @gdb 3333, @monitor N, @conectado,
+                 @parado, @caido, @fallo texto, @cerrado)
 
 Todo se dibuja en un unico lienzo. El unico control de verdad es la caja de
 texto de la ruta, porque hay que poder escribir en ella.
@@ -858,6 +860,9 @@ class Panel(tk.Tk):
         self.arrancando = 0
         self.mensaje = ('esperando al depurador' if self.esperar.get()
                         else 'conectado al simulador')
+        # El puerto del monitor de Renode (el primero libre desde 1234): la
+        # extension lo usa para adelantar uwTick. Antes que «conectado».
+        self._avisa('monitor', str(self.emulador.monitor))
         self._avisa('conectado')
         self.modulo.potenciometro(self.pote)
         # Lo que este mantenido sigue pulsado en el simulador nuevo.

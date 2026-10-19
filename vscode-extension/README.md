@@ -15,6 +15,11 @@ board, build system and ELF are read from each project.
 | `.vscode/launch.json` | **Debug &lt;name&gt; (ST-Link)**: builds, flashes, stops at your breakpoints |
 | | **Debug &lt;name&gt; (ACII Simulator)** (when the simulator is found): F5 on it builds, opens or restarts the simulator and attaches, like **ACII** with Debug ticked, also after the panel was closed |
 | `.vscode/c_cpp_properties.json` | IntelliSense for the C/C++ extension: the Debug include paths and defines from `.cproject` (hover docs, go to definition). Only created if missing |
+| `<project>/compile_commands.json` | For clangd (the STM32Cube clangd extension, which turns the C/C++ extension's IntelliSense off): the Debug build's flags from `Debug/Core/Src/subdir.mk` (or `.cproject` and the MCU family before the first build), for clang with `--target=arm-none-eabi` and newlib's headers. Without it nothing resolves and errors only show when building. Makefile projects only (CMake writes its own); only created if missing |
+
+The STM32Cube clangd extension drops every error and warning clangd reports
+unless `stm32cube-ide-clangd.enableLinting` is on, and it is off by default:
+when the extension writes `compile_commands.json` it offers to turn it on.
 
 Debugging (board or simulator) adds a function breakpoint on `main` to the
 Breakpoints view if there is none (`stlinkAutodebug.stopAtMain`), so a session
@@ -70,6 +75,18 @@ Loads only in workspaces containing a `.ioc`. The probe is checked when the
 project opens and on USB hotplug events (`stlinkAutodebug.watchUsb`; inotify on
 `/dev` and `/dev/bus/usb`, no polling). On Apple Silicon `/dev/bus/usb` only
 exists while something is plugged in, hence the watch on `/dev`.
+
+## Windows
+
+Building and the ACII simulator work on Windows too (not tested on a Windows
+machine yet). With the default settings the tools are found in STM32CubeIDE
+(`C:\ST\STM32CubeIDE_*`): its `make`, with its GNU Tools for STM32 first in
+the build task's PATH, and its `arm-none-eabi-gdb`. The simulator runs as
+`py -3 panel.py` (`python` without the py launcher), and Renode's monitor port
+comes from the panel (`@monitor N`) instead of `/proc`. A project's
+`C:\...` paths are not "fixed" there: they are that machine's own. Board
+debugging needs an OpenOCD on PATH (`stlinkAutodebug.openocdPath`), and the
+ST-Link hotplug detection is Linux only.
 
 ## ACII simulator (no board needed)
 

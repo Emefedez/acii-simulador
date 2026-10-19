@@ -133,6 +133,8 @@ líneas sobre `recv` y se cierra el socket, que desbloquea la lectura.
   PC13 (B1), y PUPDR arranca con el valor de reinicio real (`pupdrReset`).
 - `panel.py --arrancar --esperar --ordenes`: ver el principio de `panel.py`.
   `--ordenes` es lo que usa la extensión ST-Link Auto Debug de VS Code.
+  Avisa también del puerto del monitor de Renode (`@monitor N`), para que
+  la extensión lo encuentre en cualquier sistema (antes lo buscaba en `/proc`).
 
 Copia de antes de estos cambios: `~/Downloads/ACII_Simulador-before-claude-20261012.tar.gz`.
 - **El display se lee mejor**: ventanilla gris ahumado (#24262A) en vez de

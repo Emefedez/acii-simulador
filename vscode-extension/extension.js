@@ -14,6 +14,7 @@ const net = require('net');
 const os = require('os');
 const path = require('path');
 
+const WINDOWS = process.platform === 'win32';
 const SCRIPTS = '/usr/share/openocd/scripts';
 const USB_SYSFS = '/sys/bus/usb/devices';
 const USB_DEV = '/dev/bus/usb';
@@ -236,7 +237,10 @@ function entries(project, s) {
       type: 'process',
       command: s.makeCommand,
       args: [`-j${os.cpus().length}`, 'all'],
-      options: { cwd: P('Debug') },
+      options: {
+        cwd: P('Debug'),
+        ...(s.buildPath?.length ? { env: { PATH: [...s.buildPath, '${env:PATH}'].join(path.delimiter) } } : {}),
+      },
       group: 'build',
       problemMatcher: { base: '$gcc', fileLocation: ['autoDetect', P('Debug')] },
     });
@@ -364,13 +368,139 @@ function describeChanges(changes) {
   return { text, onlyUpdates: !adds.length };
 }
 
+// The full path of a command (a path or a name looked up in PATH), or
+// undefined. On Windows also with the PATHEXT extensions (.exe...).
 function which(cmd) {
-  if (cmd.includes('/')) return fs.existsSync(cmd) ? cmd : undefined;
-  for (const dir of (process.env.PATH ?? '').split(':').concat(['/usr/bin', '/usr/local/bin'])) {
-    const p = path.join(dir, cmd);
-    try { fs.accessSync(p, fs.constants.X_OK); return p; } catch { /* keep looking */ }
+  const exts = WINDOWS ? ['', ...(process.env.PATHEXT ?? '.EXE;.CMD;.BAT').split(';').filter(Boolean)] : [''];
+  const found = p => exts.map(e => p + e).find(f => {
+    try { return fs.statSync(f).isFile() && (WINDOWS || (fs.accessSync(f, fs.constants.X_OK), true)); } catch { return false; }
+  });
+  if (path.isAbsolute(cmd) || cmd.includes('/') || cmd.includes(path.sep)) return found(cmd);
+  const dirs = (process.env.PATH ?? '').split(path.delimiter).filter(Boolean);
+  if (!WINDOWS) dirs.push('/usr/bin', '/usr/local/bin');
+  for (const dir of dirs) {
+    const p = found(path.join(dir, cmd));
+    if (p) return p;
   }
   return undefined;
+}
+
+// The tools/bin folder of STM32CubeIDE's newest plugin whose name starts with
+// `prefix` (its GNU Tools for STM32, its make), or undefined. CubeIDE installs
+// in C:\ST\STM32CubeIDE_x\STM32CubeIDE on Windows, ~/st or /opt/st on Linux.
+function cubeIdeBin(prefix, home = os.homedir()) {
+  const pluginDirs = [];
+  const add = (parent, sub) => {
+    let names;
+    try { names = fs.readdirSync(parent); } catch { return; }
+    for (const n of names) if (/^stm32cubeide/i.test(n)) pluginDirs.push(path.join(parent, n, ...sub, 'plugins'));
+  };
+  if (WINDOWS) {
+    for (const drive of new Set([process.env.SystemDrive || 'C:', 'C:'])) add(`${drive}\\ST`, ['STM32CubeIDE']);
+  } else {
+    add(path.join(home, 'st'), []);
+    add('/opt/st', []);
+    pluginDirs.push('/Applications/STM32CubeIDE.app/Contents/Eclipse/plugins');
+  }
+  const bins = [];
+  for (const dir of pluginDirs) {
+    let names;
+    try { names = fs.readdirSync(dir); } catch { continue; }
+    for (const n of names) {
+      const bin = path.join(dir, n, 'tools', 'bin');
+      if (n.startsWith(prefix) && fs.existsSync(bin)) bins.push(bin);
+    }
+  }
+  return bins.sort((a, b) => a.localeCompare(b, undefined, { numeric: true })).pop();
+}
+
+const GNU_TOOLS = 'com.st.stm32cube.ide.mcu.externaltools.gnu-tools-for-stm32';
+const CUBE_MAKE = 'com.st.stm32cube.ide.mcu.externaltools.make';
+
+// The commands and the PATH additions to build and debug with: the configured
+// ones, or, when a default is not installed, STM32CubeIDE's own (on Windows
+// that is the usual case: there is no stm32-make or /usr/bin/gdb).
+function resolveTools(c) {
+  const gnu = cubeIdeBin(GNU_TOOLS);
+  const exe = WINDOWS ? '.exe' : '';
+  let gdbPath = c.gdbPath;
+  if (!which(gdbPath) && gdbPath === '/usr/bin/gdb') {
+    gdbPath = (gnu && which(path.join(gnu, `arm-none-eabi-gdb${exe}`)))
+      ?? which('arm-none-eabi-gdb') ?? which('gdb-multiarch') ?? which('gdb') ?? gdbPath;
+  }
+  let makeCommand = c.makeCommand;
+  const buildPath = [];
+  if (!which(makeCommand) && makeCommand === 'stm32-make') {
+    const make = cubeIdeBin(CUBE_MAKE);
+    makeCommand = (make && which(path.join(make, `make${exe}`))) ?? 'make';
+    // The makefile calls arm-none-eabi-gcc, and CubeIDE's make on Windows its
+    // own rm/sh: both bin folders go first in the build task's PATH.
+    buildPath.push(...[gnu, make].filter(Boolean));
+  }
+  return { gdbPath, makeCommand, buildPath };
+}
+
+// newlib's headers (stdint.h...) for clangd: from CubeIDE's GNU Tools for
+// STM32, or a system arm-none-eabi-gcc.
+function newlibInclude() {
+  const gnu = cubeIdeBin(GNU_TOOLS);
+  const gcc = which('arm-none-eabi-gcc');
+  return [gnu && path.join(gnu, '..', 'arm-none-eabi', 'include'),
+    gcc && path.join(path.dirname(gcc), '..', 'arm-none-eabi', 'include'),
+    '/usr/arm-none-eabi/include', '/usr/lib/arm-none-eabi/include']
+    .filter(Boolean).map(d => path.normalize(d)).find(d => fs.existsSync(path.join(d, 'stdint.h')));
+}
+
+// The CPU flags CubeIDE uses by default for each family, for a project not
+// built yet (once built, the flags are read from Debug/**/subdir.mk).
+function cpuFlags(family) {
+  const f = (family ?? '').toUpperCase();
+  if (/^STM32(F0|G0|L0|C0|U0)/.test(f)) return ['-mcpu=cortex-m0plus', '-mfloat-abi=soft'];
+  if (/^STM32(F1|F2|L1)/.test(f)) return ['-mcpu=cortex-m3', '-mfloat-abi=soft'];
+  if (/^STM32(F7|H7)/.test(f)) return ['-mcpu=cortex-m7', '-mfpu=fpv5-d16', '-mfloat-abi=hard'];
+  if (/^STM32(L5|U5|H5|WBA)/.test(f)) return ['-mcpu=cortex-m33', '-mfpu=fpv5-sp-d16', '-mfloat-abi=hard'];
+  return ['-mcpu=cortex-m4', '-mfpu=fpv4-sp-d16', '-mfloat-abi=hard']; // F3, F4, G4, L4, WB...
+}
+
+// compile_commands.json for clangd (the STM32Cube clangd extension, which
+// replaces the C/C++ extension's IntelliSense): without it clangd finds none
+// of the HAL headers, so nothing resolves and errors only show when building.
+// The flags are those of the Debug build, compiled for the MCU by clang.
+// Only for CubeIDE makefile projects: CMake writes its own.
+function compileCommands(project) {
+  const debug = path.join(project.dir, 'Debug');
+  let flags;
+  let dir = project.dir;
+  const core = path.join(debug, 'Core', 'Src', 'subdir.mk');
+  const mk = fs.existsSync(core) ? core : newest(debug, n => n === 'subdir.mk', 4, new Set())?.file;
+  const line = mk && /^\s*arm-none-eabi-gcc\s+"\$<"(.*)$/m.exec(readText(mk) ?? '')?.[1];
+  if (line) {
+    // Exactly the build's flags; its -I paths are relative to Debug/, where make runs.
+    dir = debug;
+    flags = (line.match(/(?:[^\s"]+|"[^"]*")+/g) ?? [])
+      .map(a => a.replace(/"/g, ''))
+      .filter(a => /^-(mcpu|mfpu|mfloat-abi|mthumb|std|D|I|W)/.test(a) && !a.startsWith('-Wl'));
+  } else {
+    const props = JSON.parse(cppProperties(project)).configurations[0];
+    const rel = p => p.replace(/^\$\{workspaceFolder\}\/?/, '').split('/').slice(project.rel ? project.rel.split(path.sep).length : 0).join('/');
+    flags = [...cpuFlags(project.family), '-mthumb', '-std=gnu11', '-Wall',
+      ...props.defines.map(d => `-D${d}`), ...props.includePath.map(p => `-I${rel(p) || '.'}`)];
+  }
+  const libc = newlibInclude();
+  const args = ['clang', '--target=arm-none-eabi', ...flags, ...(libc ? ['-isystem', libc] : [])];
+  const sources = [];
+  const walk = (d, depth) => {
+    let list;
+    try { list = fs.readdirSync(d, { withFileTypes: true }); } catch { return; }
+    for (const e of list) {
+      const p = path.join(d, e.name);
+      if (e.isDirectory()) {
+        if (depth > 0 && !e.name.startsWith('.') && !['Debug', 'Release', 'build', 'node_modules'].includes(e.name)) walk(p, depth - 1);
+      } else if (/\.(c|cpp)$/i.test(e.name)) sources.push(p);
+    }
+  };
+  walk(project.dir, 8);
+  return JSON.stringify(sources.sort().map(file => ({ directory: dir, file, arguments: [...args, '-c', file] })), null, 1) + '\n';
 }
 
 // ---------------------------------------------------------------- simulator
@@ -395,7 +525,8 @@ function findSimulator(configured, home = os.homedir()) {
       candidates.push(...launchers(path.join(home, d, 'ACII_Simulador')));
     }
   }
-  return candidates.find(c => /\.(sh|py)$/.test(c) && fs.existsSync(c));
+  // Windows cannot run the .sh launcher: there it is panel.py, through Python.
+  return candidates.find(c => (WINDOWS ? /\.py$/ : /\.(sh|py)$/).test(c) && fs.existsSync(c));
 }
 
 // GDB attaches to the simulator's GDB server; the simulator was started
@@ -435,7 +566,9 @@ function remoteLaunch(name, elf, cwd, s, server) {
 // The port of the Renode monitor of the simulator we started: the panel gives
 // Renode `--port N` (the first free one from 1234) and its script is simula.resc.
 function renodeMonitorPort() {
-  for (const pid of fs.readdirSync('/proc').filter(n => /^\d+$/.test(n))) {
+  let pids;
+  try { pids = fs.readdirSync('/proc').filter(n => /^\d+$/.test(n)); } catch { return undefined; } // not Linux
+  for (const pid of pids) {
     let argv;
     try { argv = fs.readFileSync(`/proc/${pid}/cmdline`, 'latin1').split('\0'); } catch { continue; }
     const i = argv.indexOf('--port');
@@ -497,7 +630,7 @@ function activate(context) {
   simDebugStatus.name = 'ACII Simulator: Debug checkbox';
   simDebugStatus.command = 'stlinkAutodebug.toggleSimulatorDebug';
   const config = () => vscode.workspace.getConfiguration('stlinkAutodebug');
-  const settings = () => {
+  const rawSettings = () => {
     const c = config();
     return {
       onConnect: c.get('onConnect'),
@@ -505,6 +638,7 @@ function activate(context) {
       openocdPath: c.get('openocdPath'),
       gdbPath: c.get('gdbPath'),
       makeCommand: c.get('makeCommand'),
+      buildPath: [],
       cubeCommand: c.get('cubeCommand'),
       simulatorPath: c.get('simulator.path'),
       simulatorDebug: c.get('simulator.debug'),
@@ -514,13 +648,17 @@ function activate(context) {
       heldStepRate: c.get('heldStepRate'),
     };
   };
+  const settings = () => {
+    const s = rawSettings();
+    return { ...s, ...resolveTools(s) };
+  };
   const sessions = new Map(); // debug session id -> start time
   const simSessions = new Set(); // our debug sessions attached to the ACII simulator
   let current; // device node of the probe last seen, so a replug asks again
   let watchers = [];
   let timer;
   let flashDone; // listener for the running Flash task
-  let sim; // the simulator panel we started: { proc, listeners }
+  let sim; // the simulator panel we started: { proc, listeners, monitor (Renode's port) }
   let simBusy = false; // a build/start is in progress
   let simAttaching = false; // simulate() is starting the session itself
   const running = new Set(); // ids of debug sessions whose program is running
@@ -597,7 +735,7 @@ function activate(context) {
         const stop = () => { if (pending) { clearInterval(pending.timer); clearTimeout(pending.delay); pending = undefined; } };
         const push = async () => {
           const st = settings();
-          const port = renodeMonitorPort();
+          const port = sim?.monitor ?? renodeMonitorPort();
           addr ??= await uwTickAddress(st.gdbPath, session.configuration.program);
           if (!pending || !port || !addr) return;
           try {
@@ -729,6 +867,14 @@ function activate(context) {
       }
       changes.push({ file: '.vscode/c_cpp_properties.json', newFile: true, added: ['c_cpp_properties.json'], updated: [] });
     }
+    const dbFile = path.join(project.dir, 'compile_commands.json');
+    if (project.build === 'make' && !fs.existsSync(dbFile)) {
+      if (write) {
+        fs.writeFileSync(dbFile, compileCommands(project));
+        offerLinting();
+      }
+      changes.push({ file: path.join(project.rel, 'compile_commands.json'), newFile: true, added: ['compile_commands.json'], updated: [] });
+    }
     const { tasks, configurations } = entries(project, s);
     const written = { ...context.workspaceState.get('written', {}) };
     for (const [section, key, version, desired, file] of [
@@ -752,8 +898,22 @@ function activate(context) {
     return changes;
   }
 
+  // The STM32Cube clangd extension drops every diagnostic clangd sends unless
+  // its enableLinting is on (off by default): errors only showed on building.
+  async function offerLinting() {
+    if (!vscode.extensions.getExtension('stmicroelectronics.stm32cube-ide-clangd')) return;
+    const c = vscode.workspace.getConfiguration('stm32cube-ide-clangd');
+    if (c.get('enableLinting') || context.globalState.get('lintingDeclined')) return;
+    const choice = await vscode.window.showInformationMessage(
+      'The STM32Cube clangd extension hides errors and warnings while you type (stm32cube-ide-clangd.enableLinting is off). Turn them on?',
+      'Turn On', "Don't Ask Again");
+    if (choice === 'Turn On') await c.update('enableLinting', true, vscode.ConfigurationTarget.Global);
+    if (choice === "Don't Ask Again") await context.globalState.update('lintingDeclined', true);
+  }
+
   function fixMakefile(dir) {
-    if (path.basename(dir) === 'Debug' || !fs.existsSync(path.join(dir, 'Debug', 'makefile'))) return;
+    // On Windows a C:\\ path is this machine's own and every object has one.
+    if (WINDOWS || path.basename(dir) === 'Debug' || !fs.existsSync(path.join(dir, 'Debug', 'makefile'))) return;
     let fixes, removed;
     try {
       fixes = fixWindowsMakefile(dir);
@@ -1085,18 +1245,22 @@ function activate(context) {
   // It is driven over stdin (--ordenes) and reports "@event detail" lines.
   function startSimulator(script) {
     if (sim && sim.proc.exitCode === null && !sim.proc.killed) return false;
-    const [cmd, args] = script.endsWith('.py') ? ['python3', [script]] : [script, []];
+    // Windows: panel.py through the py launcher (python.org's installer adds it;
+    // a bare `python` may be the Microsoft Store stub).
+    const python = WINDOWS ? (which('py') ? ['py', '-3'] : ['python']) : ['python3'];
+    const [cmd, args] = script.endsWith('.py') ? [python[0], [...python.slice(1), script]] : [script, []];
     const proc = spawn(cmd, [...args, '--ordenes'], { cwd: path.dirname(script), stdio: ['pipe', 'pipe', 'pipe'] });
     const current = { proc, listeners: new Set() };
     sim = current;
     log.appendLine(`simulator: started ${script} (pid ${proc.pid})`);
     let buffered = '';
     proc.stdout.on('data', chunk => {
-      const lines = (buffered + chunk).split('\n');
+      const lines = (buffered + chunk).split(/\r?\n/); // \r\n from Python on Windows
       buffered = lines.pop();
       for (const line of lines.filter(Boolean)) {
         log.appendLine(`simulator: ${line}`);
         const m = /^@(\S+)\s*(.*)$/.exec(line);
+        if (m?.[1] === 'monitor') current.monitor = Number(m[2]); // Renode's monitor port
         if (m) for (const l of current.listeners) l(m[1], m[2]);
       }
     });
@@ -1152,7 +1316,10 @@ function activate(context) {
   function inlineTask(entry, folder, project) {
     const resolve = v => v.split('${workspaceFolder}').join(project.folder);
     return new vscode.Task({ type: 'process' }, folder ?? vscode.TaskScope.Workspace, entry.label, 'ST-Link',
-      new vscode.ProcessExecution(entry.command, entry.args.map(resolve), { cwd: resolve(entry.options.cwd) }), []);
+      new vscode.ProcessExecution(entry.command, entry.args.map(resolve), {
+        cwd: resolve(entry.options.cwd),
+        ...(entry.options.env ? { env: { PATH: entry.options.env.PATH.split('${env:PATH}').join(process.env.PATH ?? '') } } : {}),
+      }), []);
   }
 
   // OpenOCD is silent in pipe mode; surface its errors when a session fails.
@@ -1185,5 +1352,5 @@ function deactivate() { return stopSimulatorOnExit?.(); }
 module.exports = {
   activate,
   deactivate,
-  _test: { stlinkIds, findStlink, findIocFiles, readProject, targetCfg, elfRel, elfIsStale, entries, openocdCfg, mergeEntries, describeChanges, fixWindowsMakefile, removeWindowsObjects, findSimulator, simulatorLaunch, renodeMonitorPort, renodeMonitor, uwTickAddress },
+  _test: { stlinkIds, findStlink, findIocFiles, readProject, targetCfg, elfRel, elfIsStale, entries, openocdCfg, mergeEntries, describeChanges, fixWindowsMakefile, removeWindowsObjects, findSimulator, simulatorLaunch, which, cubeIdeBin, resolveTools, newlibInclude, cpuFlags, compileCommands, renodeMonitorPort, renodeMonitor, uwTickAddress },
 };

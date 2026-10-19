@@ -3,7 +3,7 @@
   "displayName": "ST-Link Auto Debug",
   "description": "Sets up any STM32CubeMX project to build, flash and debug on a real board (native OpenOCD + GDB), offers to do so when an ST-Link is connected, and builds and runs or debugs it in the ACII simulator.",
   "publisher": "local",
-  "version": "0.4.14",
+  "version": "0.4.15",
   "license": "MIT",
   "engines": {
     "vscode": "^1.90.0"
@@ -136,12 +136,12 @@
         "stlinkAutodebug.gdbPath": {
           "type": "string",
           "default": "/usr/bin/gdb",
-          "description": "GDB with ARM support (a multi-target GDB or arm-none-eabi-gdb)."
+          "description": "GDB with ARM support (a multi-target GDB or arm-none-eabi-gdb). If the default `/usr/bin/gdb` does not exist (Windows), STM32CubeIDE's `arm-none-eabi-gdb` is used, else `arm-none-eabi-gdb`, `gdb-multiarch` or `gdb` from PATH."
         },
         "stlinkAutodebug.makeCommand": {
           "type": "string",
           "default": "stm32-make",
-          "description": "make for STM32CubeIDE projects (Debug/makefile). The default runs it in the muvm VM with CubeIDE's toolchain."
+          "description": "make for STM32CubeIDE projects (Debug/makefile). The default runs it in the muvm VM with CubeIDE's toolchain. If `stm32-make` is not installed (Windows), STM32CubeIDE's own `make` is used, with its GNU Tools for STM32 put first in the build task's PATH."
         },
         "stlinkAutodebug.cubeCommand": {
           "type": "string",
