@@ -132,6 +132,7 @@ else
     else
         rm -f "$APLICACIONES/.acii_write_test"
     fi
+    rm -f "$APLICACIONES/acii-simulador.desktop" 2>/dev/null || true
     cat > "$APLICACIONES/acii-simulador.desktop" <<FIN
 [Desktop Entry]
 Type=Application

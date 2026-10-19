@@ -1,0 +1,291 @@
+{
+  "name": "stlink-autodebug",
+  "displayName": "ST-Link Auto Debug",
+  "description": "Sets up any STM32CubeMX project to build, flash and debug on a real board (native OpenOCD + GDB), offers to do so when an ST-Link is connected, and builds and runs or debugs it in the ACII simulator.",
+  "publisher": "local",
+  "version": "0.4.14",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Debuggers"
+  ],
+  "activationEvents": [
+    "workspaceContains:**/*.ioc"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "stlinkAutodebug.simulate",
+        "title": "Build & Run in ACII Simulator (debug per checkbox)",
+        "category": "ST-Link",
+        "icon": "$(play)"
+      },
+      {
+        "command": "stlinkAutodebug.simulateRun",
+        "title": "Build & Run in ACII Simulator (no debugger)",
+        "category": "ST-Link",
+        "icon": "$(play)"
+      },
+      {
+        "command": "stlinkAutodebug.simulateDebug",
+        "title": "Build & Debug in ACII Simulator",
+        "category": "ST-Link",
+        "icon": "$(debug-alt)"
+      },
+      {
+        "command": "stlinkAutodebug.toggleSimulatorDebug",
+        "title": "Toggle Debugging in ACII Simulator",
+        "category": "ST-Link"
+      },
+      {
+        "command": "stlinkAutodebug.simulatorDebugOn",
+        "title": "☐ Debug in ACII Simulator (now: just run)",
+        "category": "ST-Link",
+        "icon": "$(circle-large-outline)"
+      },
+      {
+        "command": "stlinkAutodebug.simulatorDebugOff",
+        "title": "☑ Debug in ACII Simulator (now: with debugger)",
+        "category": "ST-Link",
+        "icon": "$(pass-filled)"
+      },
+      {
+        "command": "stlinkAutodebug.stopSimulator",
+        "title": "Close ACII Simulator",
+        "category": "ST-Link"
+      },
+      {
+        "command": "stlinkAutodebug.debug",
+        "title": "Flash & Debug on Board",
+        "category": "ST-Link"
+      },
+      {
+        "command": "stlinkAutodebug.flash",
+        "title": "Flash Board",
+        "category": "ST-Link"
+      },
+      {
+        "command": "stlinkAutodebug.setup",
+        "title": "Set Up Project for Board Debugging",
+        "category": "ST-Link"
+      },
+      {
+        "command": "stlinkAutodebug.advanceTime",
+        "title": "Advance Program Time (HAL tick)",
+        "category": "ST-Link",
+        "icon": "$(watch)"
+      },
+      {
+        "command": "stlinkAutodebug.heldStepOver",
+        "title": "Step Over (hold to repeat)",
+        "category": "ST-Link"
+      },
+      {
+        "command": "stlinkAutodebug.heldStepInto",
+        "title": "Step Into (hold to repeat)",
+        "category": "ST-Link"
+      },
+      {
+        "command": "stlinkAutodebug.heldStepOut",
+        "title": "Step Out (hold to repeat)",
+        "category": "ST-Link"
+      }
+    ],
+    "configuration": {
+      "title": "ST-Link Auto Debug",
+      "properties": {
+        "stlinkAutodebug.onConnect": {
+          "type": "string",
+          "enum": [
+            "ask",
+            "debug",
+            "flash",
+            "nothing"
+          ],
+          "default": "ask",
+          "description": "What to do when an ST-Link is found for an open STM32 project."
+        },
+        "stlinkAutodebug.generateFiles": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "ask",
+            "off"
+          ],
+          "default": "ask",
+          "markdownDescription": "Files a project needs: `openocd.cfg`, and Build/Flash/Debug entries in `.vscode/tasks.json` and `.vscode/launch.json`. Existing files and entries you edited are never overwritten.",
+          "enumDescriptions": [
+            "Add missing files without asking.",
+            "When an STM32 project without them is opened, ask before adding anything.",
+            "Never offer when a project opens (flashing/debugging still asks if files are missing)."
+          ]
+        },
+        "stlinkAutodebug.watchUsb": {
+          "type": "boolean",
+          "default": true,
+          "description": "Also react when an ST-Link is plugged in after the project was opened (kernel USB events, no polling). When off, the probe is only checked when the project opens."
+        },
+        "stlinkAutodebug.openocdPath": {
+          "type": "string",
+          "default": "openocd",
+          "description": "OpenOCD executable."
+        },
+        "stlinkAutodebug.gdbPath": {
+          "type": "string",
+          "default": "/usr/bin/gdb",
+          "description": "GDB with ARM support (a multi-target GDB or arm-none-eabi-gdb)."
+        },
+        "stlinkAutodebug.makeCommand": {
+          "type": "string",
+          "default": "stm32-make",
+          "description": "make for STM32CubeIDE projects (Debug/makefile). The default runs it in the muvm VM with CubeIDE's toolchain."
+        },
+        "stlinkAutodebug.cubeCommand": {
+          "type": "string",
+          "default": "cube",
+          "description": "STM32Cube CLI used to build CubeMX CMake projects (cube cmake --preset Debug)."
+        },
+        "stlinkAutodebug.simulator.debug": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Debug when running in the ACII simulator: it waits at reset until GDB attaches, then stops at your breakpoints. Off: build and just run it. Also the **Debug** checkbox in the status bar, next to **ACII**."
+        },
+        "stlinkAutodebug.simulator.path": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "The ACII simulator: its `simulador-acii.sh` (or `panel.py`), or the `ACII_Simulador` folder. Empty: found from its menu entry (`acii-simulador.desktop`) or `~/Downloads/ACII_Simulador`."
+        },
+        "stlinkAutodebug.stopAtMain": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Before debugging (board or ACII simulator), add a function breakpoint on `main` to the Breakpoints view if there is none, so the session stops at the start. Untick or remove it there like any breakpoint; turn this off to not have it added again."
+        },
+        "stlinkAutodebug.advanceTimeMs": {
+          "type": "number",
+          "default": 100,
+          "minimum": 1,
+          "markdownDescription": "Milliseconds the **Advance Program Time** button (debug toolbar, while paused) adds to the HAL tick (`uwTick`). Program time stops while paused and a step runs only microseconds of it, so debounces and `HAL_Delay`s never finish when stepping; this skips ahead."
+        },
+        "stlinkAutodebug.holdToStep": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "In STM32 debug sessions, holding **F10** / **F11** / **Shift+F11** keeps stepping (over / into / out) until the key is released, at `stlinkAutodebug.heldStepRate`. A single press steps once, as usual. Keyboard only: VS Code gives no way to tell a held toolbar button."
+        },
+        "stlinkAutodebug.heldStepRate": {
+          "type": "number",
+          "default": 8,
+          "minimum": 1,
+          "maximum": 30,
+          "markdownDescription": "Steps per second while a step key is held (`stlinkAutodebug.holdToStep`). Your keyboard's repeat rate is the upper limit, and a step that takes longer slows it down."
+        },
+        "stlinkAutodebug.autoAdvanceSteps": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "In the ACII simulator, a step (**F10**/**F11**/**Shift+F11**) over code that waits for time, like `while (!tickPass())` or `HAL_Delay`, would never finish: each step runs nanoseconds of program time and the wait needs milliseconds. While a step is still running after 1.5 s, push the HAL tick (`uwTick`) forward by `stlinkAutodebug.advanceTimeMs` every 0.5 s until it ends. Off: step like on a real board (use **Advance Program Time** while paused)."
+        }
+      }
+    },
+    "menus": {
+      "editor/title/run": [
+        {
+          "command": "stlinkAutodebug.simulate",
+          "when": "stlinkAutodebug.active && resourceLangId =~ /^(c|cpp)$/",
+          "group": "1_acii@0"
+        },
+        {
+          "command": "stlinkAutodebug.simulateRun",
+          "when": "stlinkAutodebug.active && resourceLangId =~ /^(c|cpp)$/",
+          "group": "1_acii@1"
+        },
+        {
+          "command": "stlinkAutodebug.simulateDebug",
+          "when": "stlinkAutodebug.active && resourceLangId =~ /^(c|cpp)$/",
+          "group": "1_acii@2"
+        },
+        {
+          "command": "stlinkAutodebug.simulatorDebugOn",
+          "when": "stlinkAutodebug.active && resourceLangId =~ /^(c|cpp)$/ && !config.stlinkAutodebug.simulator.debug",
+          "group": "2_acii@0"
+        },
+        {
+          "command": "stlinkAutodebug.simulatorDebugOff",
+          "when": "stlinkAutodebug.active && resourceLangId =~ /^(c|cpp)$/ && config.stlinkAutodebug.simulator.debug",
+          "group": "2_acii@0"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "stlinkAutodebug.simulate",
+          "when": "stlinkAutodebug.active"
+        },
+        {
+          "command": "stlinkAutodebug.simulateRun",
+          "when": "stlinkAutodebug.active"
+        },
+        {
+          "command": "stlinkAutodebug.simulateDebug",
+          "when": "stlinkAutodebug.active"
+        },
+        {
+          "command": "stlinkAutodebug.toggleSimulatorDebug",
+          "when": "stlinkAutodebug.active"
+        },
+        {
+          "command": "stlinkAutodebug.stopSimulator",
+          "when": "stlinkAutodebug.active"
+        },
+        {
+          "command": "stlinkAutodebug.simulatorDebugOn",
+          "when": "false"
+        },
+        {
+          "command": "stlinkAutodebug.simulatorDebugOff",
+          "when": "false"
+        },
+        {
+          "command": "stlinkAutodebug.advanceTime",
+          "when": "stlinkAutodebug.active && debugType == 'cppdbg' && debugState == 'stopped'"
+        },
+        {
+          "command": "stlinkAutodebug.heldStepOver",
+          "when": "false"
+        },
+        {
+          "command": "stlinkAutodebug.heldStepInto",
+          "when": "false"
+        },
+        {
+          "command": "stlinkAutodebug.heldStepOut",
+          "when": "false"
+        }
+      ],
+      "debug/toolBar": [
+        {
+          "command": "stlinkAutodebug.advanceTime",
+          "when": "stlinkAutodebug.active && debugType == 'cppdbg' && debugState == 'stopped'",
+          "group": "navigation@100"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "stlinkAutodebug.heldStepOver",
+        "key": "f10",
+        "when": "inDebugMode && debugType == 'cppdbg' && stlinkAutodebug.active && config.stlinkAutodebug.holdToStep"
+      },
+      {
+        "command": "stlinkAutodebug.heldStepInto",
+        "key": "f11",
+        "when": "inDebugMode && debugType == 'cppdbg' && stlinkAutodebug.active && config.stlinkAutodebug.holdToStep"
+      },
+      {
+        "command": "stlinkAutodebug.heldStepOut",
+        "key": "shift+f11",
+        "when": "inDebugMode && debugType == 'cppdbg' && stlinkAutodebug.active && config.stlinkAutodebug.holdToStep"
+      }
+    ]
+  }
+}
